@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2015",
+    "module": "ES2015",
+    "esModuleInterop": false,
+    "allowSyntheticDefaultImports": false,
+    "isolatedModules": true,
+    "importHelpers": true,
+    "baseUrl": ".",
+    "rootDir": "src",
+    "outDir": "dist",
+    "moduleResolution": "node",
+
+    "sourceMap": true,
+    "inlineSourceMap": false,
+    "inlineSources": true,
+    "declaration": true,
+    "declarationMap": false,
+    "noEmit": true,
+    "removeComments": false,
+
+    "resolveJsonModule": true,
+    "skipLibCheck": false,
+    "allowJs": false,
+    "checkJs": false,
+    "experimentalDecorators": false,
+    "emitDecoratorMetadata": false,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns":true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+    "forceConsistentCasingInFileNames": true,
+    "downlevelIteration": false,
+
+    "disableSizeLimit": true,
+    "noErrorTruncation": true
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

@@ -1,0 +1,10 @@
+/*
+!/.gitignore
+!/.gitattributes
+
+!/*.[tj]s
+!/*.json
+!/.yarnrc.yml
+!/yarn.lock
+!/src
+!/scripts
