@@ -85,7 +85,11 @@ export function newGameErrorClass<GN extends string>(game: GN): GameErrorConstru
 
   // Sets the name of the anonymous class, so it will show up in stack traces
   [c, c.constructor].forEach(o => {
-    Object.defineProperty(o, 'name', {value: name, configurable: false, writable: false, enumerable: true});
+    try {
+      Object.defineProperty(o, 'name', {value: name, configurable: false, writable: false, enumerable: true});
+    } catch(_) {
+      // Some environments may throw an error when trying to set the name
+    }
   });
 
   return c;

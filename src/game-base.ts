@@ -182,8 +182,6 @@ export abstract class GameBase<
       }
     });
 
-    const prevRunningHandle = this.#runningHandle;
-
     // Wrap the actual game start implementation so the promise can be cancelled
     // in case the game doesn't stop with a reset call.
     const ret = new Promise<GameEndEvent<EndMetadata, GN>>(async (res, rej) => {
@@ -222,10 +220,18 @@ export abstract class GameBase<
       this.#lastEnd = endMetadata;
       this.#events.emit("end", endMetadata);
     }).catch(e => {
-      this.#events.emit("end", e === GameCanceled ? GameCanceled : {
+      if (e === GameCanceled) {
+        this.#events.emit("end", GameCanceled);
+        return;
+      };
+
+      const endMetadata = {
         status: GameEndStatus.Error,
         metadata: this.newError(e),
-      });
+      };
+
+      this.#lastEnd = endMetadata;
+      this.#events.emit("end", endMetadata);
     }).finally(() => {
       // Call cancel to allow the cancel promise to be garbage collected
       cancel();
@@ -263,9 +269,8 @@ export abstract class GameBase<
   /**
    * Returns the last game result. If the game hasn't been run yet or has been reset, this method returns undefined.
    * After a reset, the last game result is cleared, so this method will return undefined.
-   * @returns {undefined | GameEndEvent<EndMetadata, GN>} Last game result.
    */
-  public lastGameResult(): undefined | GameEndEvent<EndMetadata, GN> {
+  public get lastGameResult(): undefined | GameEndEvent<EndMetadata, GN> {
     return this.#lastEnd;
   }
 
