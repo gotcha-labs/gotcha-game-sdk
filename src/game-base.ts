@@ -334,4 +334,28 @@ export abstract class GameBase<
    * This method is guaranteed to be called only once for each game run.
    */
   protected abstract resetImpl(): Promise<void>;
+
+  public on<E extends keyof GameEvents<EndMetadata, GN>>(
+    event: E,
+    listener: (...args: GameEvents<EndMetadata, GN>[E]) => void,
+  ) {
+    this.#events.on(event, listener);
+    return this;
+  }
+
+  public once<E extends keyof GameEvents<EndMetadata, GN>>(
+    event: E,
+    listener: (...args: GameEvents<EndMetadata, GN>[E]) => void,
+  ) {
+    this.#events.once(event, listener);
+    return this;
+  }
+
+  public off<E extends keyof GameEvents<EndMetadata, GN>>(
+    event: E,
+    listener: (...args: GameEvents<EndMetadata, GN>[E]) => void,
+  ) {
+    this.#events.off(event, listener);
+    return this;
+  }
 }
