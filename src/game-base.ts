@@ -1,13 +1,13 @@
 // TODO: add a middleware to interop the `GameBase` class with svelte-specific
 //       logic (examples: binding, async, stores, etc.)
 
-import EventEmitter from "eventemitter3";
+import { EventEmitter } from "eventemitter3";
 import { type GameErrorConstructor, type GameErrorInterface, newGameErrorClass } from "./game-error";
 
 export enum GameEndStatus {
   Success = 'success',
   Failure = 'failure',
-  Canceled = 'canceled',
+  Error   = 'error',
 }
 
 namespace TypeRestrictions {
@@ -16,12 +16,9 @@ namespace TypeRestrictions {
    */
   export type GN = string;
 
-  export type EndMetadata = Record<GameEndStatus, any>;
-}
-namespace DefaultTypes {
-  export type GN = string;
-
-  export type EndMetadata = Record<GameEndStatus, undefined>;
+  export type EndMetadata<GN extends TypeRestrictions.GN> = {
+    [S in GameEndStatus]: S extends GameEndStatus.Error ? GameErrorInterface<GN> : any;
+  };
 }
 
 /**
@@ -29,45 +26,54 @@ namespace DefaultTypes {
  *
  * @template EndMetadata - The type of the metadata that will be returned when the game ends.
  */
-export interface GameEndEvent<
-  EndMetadata extends TypeRestrictions.EndMetadata = DefaultTypes.EndMetadata,
-  S extends GameEndStatus = GameEndStatus,
-> {
-  status: S;
-  metadata: EndMetadata[S];
-}
+export type GameEndEvent<
+  EndMetadata extends TypeRestrictions.EndMetadata<GN>,
+  GN extends TypeRestrictions.GN = TypeRestrictions.GN,
+> = {
+  [S in GameEndStatus]: {
+    status: S;
+    metadata: EndMetadata[S];
+  };
+}[GameEndStatus];
+
+/**
+ * Gets thown synchronously when the game is already running and `start` is called.
+ */
+export const GameAlreadyRunning = Symbol('GameAlreadyRunning');
+
+export const GameCanceled = Symbol('GameCanceled');
 
 /**
  * Events that are emitted by every game.
  * @template EndMetadata - The type of the metadata that will be returned when the game ends.
  */
-interface GameBaseEvents<
-  GN extends TypeRestrictions.GN = DefaultTypes.GN,
-  EndMetadata extends TypeRestrictions.EndMetadata = DefaultTypes.EndMetadata,
-  S extends GameEndStatus = GameEndStatus,
+export interface GameEvents<
+  EndMetadata extends TypeRestrictions.EndMetadata<GN>,
+  GN extends TypeRestrictions.GN = TypeRestrictions.GN,
 > {
   /**
    * Emitted when the game is loading.
    * The payload is either a number between 0 and 100 representing the loading percentage
    * or nothing if the game doesn't report loading progress information.
    */
-  loading: EventEmitter.ListenerFn<[] | [number]>;
-  loaded: EventEmitter.ListenerFn<[]>;
-  /**
-   * Emitted when the game is starting.
-   * The payload is either a number between 0 and 100 representing the loading percentage
-   * or null if the game doesn't report loading progress information.
-   */
-  starting: EventEmitter.ListenerFn<[]>;
-  started: EventEmitter.ListenerFn<[]>;
-  error: EventEmitter.ListenerFn<[GameErrorInterface<GN>]>;
-  end: EventEmitter.ListenerFn<[GameEndEvent<EndMetadata, S>]>;
+  loading: [number | undefined];
+  loaded: [];
+  started: [];
+  end: [GameEndEvent<EndMetadata, GN> | typeof GameCanceled];
 }
 
 class GameBaseEventEmitter<
-  GN extends TypeRestrictions.GN = DefaultTypes.GN,
-  EndMetadata extends TypeRestrictions.EndMetadata = DefaultTypes.EndMetadata
-> extends EventEmitter<GameBaseEvents<GN, EndMetadata>> {}
+  EndMetadata extends TypeRestrictions.EndMetadata<GN>,
+  GN extends TypeRestrictions.GN,
+> extends EventEmitter<GameEvents<EndMetadata, GN>> {}
+
+interface RunningHandle<
+  EndMetadata extends TypeRestrictions.EndMetadata<GN>,
+  GN extends TypeRestrictions.GN,
+> {
+  readonly startPromise: Promise<GameEndEvent<EndMetadata, GN>>;
+  readonly cancel: () => void;
+}
 
 /**
  * Base class for games. Games should implement this base class.
@@ -76,186 +82,256 @@ class GameBaseEventEmitter<
  */
 // TODO: create GameBaseInterface interface and make this class implement it
 export abstract class GameBase<
-  GN extends TypeRestrictions.GN = DefaultTypes.GN,
-  EndMetadata extends TypeRestrictions.EndMetadata = DefaultTypes.EndMetadata,
+  GN extends TypeRestrictions.GN,
+  EndMetadata extends TypeRestrictions.EndMetadata<GN>,
 > {
-  public readonly events = new GameBaseEventEmitter<GN, EndMetadata>();
+  readonly #events = new GameBaseEventEmitter<EndMetadata, GN>();
   public readonly ErrorClass: GameErrorConstructor<GN> = newGameErrorClass(this.name);
 
+  protected readonly defaultResetTimeoutMs: number = 5000;
   #loaded = false;
-  #running = false;
+  #loadingPromise: undefined | Promise<void> = undefined;
+  #runningHandle: undefined | RunningHandle<EndMetadata, GN> = undefined;
   #resetPromise: undefined | Promise<void> = undefined;
-  #lastEnd: GameEndEvent<EndMetadata> | null = null;
+  #lastEnd: undefined | GameEndEvent<EndMetadata, GN> = undefined;
 
   constructor(public readonly name: GN) {}
 
-  protected newError = (err: unknown): GameErrorInterface<GN> => {
+  protected newError(err: unknown): GameErrorInterface<GN> {
     if (err instanceof this.ErrorClass) return err;
     return new this.ErrorClass(err);
   }
 
   /**
-   * Load the game. Returns a promise that resolves when the game is loaded or rejects on error.
-   * If the game has already been loaded, this method does nothing.
-   * If the game doesn't implement loading, this method does nothing.
+   * A callback to report the progress of an operation.
+   *
+   * @callback progressCallback
+   * @param {number} progress - The current progress as a percentage.
    */
-  async #load(): Promise<void> {
+  #loadingProgressCb = (progress: number) => {
     if (this.#loaded) return;
 
-    const loader = typeof this.loadImpl === 'function' ? this.loadImpl : this.loadImpl?.handler;
-
-    if (!loader) {
-      this.#loaded = true;
-      return;
-    }
-    if (this.reportsLoadingProgress) {
-      this.events.emit('loading', 0);
-    } else {
-      this.events.emit('loading');
-    }
-
-    try {
-      await loader.call(this);
-      this.#loaded = true;
-      this.events.emit('loaded');
-      return;
-    } catch (e) {
-      this.events.emit('error', this.newError(e));
-      throw e;
-    }
+    this.#events.emit('loading', Math.max(0,Math.min(100, progress)));
   }
 
   /**
-   * This method can be optionally implemented by the game to load resources.
+   * Loads the game. Returns a promise that resolves when the game is loaded or rejects on error.
+   * If the game has already been loaded, this method does nothing.
+   * 
+   * This game is called automatically by `start` if it hasn't been called before, so it only needs
+   * to be called manually as an optimization.
+   */
+  public load(): Promise<void> {
+    if (this.#loaded) return Promise.resolve();
+    if (this.#loadingPromise) return this.#loadingPromise;
+
+    const loadingPromise = (async () => {
+      this.#events.emit('loading', undefined);
+
+      await this.loadImpl(this.#loadingProgressCb);
+      this.#loaded = true;
+      this.#events.emit('loaded');
+    })();
+    loadingPromise.finally(() => {
+      this.#loadingPromise = undefined;
+    });
+
+    return this.#loadingPromise = loadingPromise;
+  }
+
+  /**
+   * This method should be implemented by the game. Loads game resources.
    * Unlike `start`, this method only runs once. Games with longer startup times
-   * or heavier resources should implement this to load resources, so:
-   * - the game can report its loading status separately from the starting status;
+   * due to heavier resources should implement this to load resources, so:
+   * - the game can (optionally) report its loading status separately from the starting status;
    * - the loading logic isn't repeated between multiple starts.
-   * A consequence of this is that the loading operation needs to be pure and stateless.
+   * As a consequence, the loading operation needs to be pure and stateless.
    *
    * It is called automatically by `start` if it hasn't been called before.
    * It is safe to call this method multiple times.
    * If the method throws an error, the game will emit an error event and reject the promise.
-   *
-   * Unlike `start`, this method only runs once which makes it even more important to separate
-   * the loading and starting operations for heavier games.
+   * A simple game that doesn't require loading should implement this method and leave it empty.
+   * 
+   * @param {progressCallback} progressCb - A callback that should be called with the loading progress.
    */
-  protected abstract readonly loadImpl:
-    // Null for no loading operation
-    | null
-    // Function for loading operation with optional `reportsLoadingProgress` property
-    // which indicates if the game's loading operation reports progress or not.
-    // By default, it is assumed that the loading operation reports progress.
-    | {
-    (): void | Promise<void>;
-    reportsProgress?: boolean;
-  }
-    // Object for loading operation with optional `reportsLoadingProgress` property
-    // which indicates if the game's loading operation reports progress or not.
-    // By default, it is assumed that the loading operation reports progress.
-    | {
-    handler: () => void | Promise<void>;
-    reportsProgress?: boolean;
-  };
-
-  public get reportsLoadingProgress(): boolean {
-    return !!this.loadImpl?.reportsProgress;
-  }
+  protected abstract loadImpl(progressCb: (progress: number) => void): Promise<void>;
 
   /**
-   * Start the game. Returns a promise that resolves when the game starts or rejects on error.
+   * Starts the game. Returns a promise that resolves when the game starts or rejects on error.
+   * `load` and `reset` are automatically called before starting the game.
    * The promise resolves with the end metadata.
    * Events will be emitted and can be used to track the game's progress instead of this promise.
+   * If the game is already running, this method throws `GameAlreadyRunning` synchronously.
+   * The `reset` method can be used to cancel the game.
    *
-   * @param {boolean} [forceRestart = false] - If true, and it's already running,
-   * the game will be reset and started again.
+   * @returns {boolean} A promise that resolves when the game ends.
+   * @throws {GameAlreadyRunning} If the game is already running (throws synchronously).
    */
-  public async start(forceRestart: boolean = false): Promise<void> {
-    if (this.#running && !forceRestart) {
-      console.warn('Game is already running!');
-      return;
-    }
+  public start(): Promise<GameEndEvent<EndMetadata, GN>> {
+    if (this.#runningHandle) throw GameAlreadyRunning;
 
-    await this.#load();
+    this.#lastEnd = undefined;
 
-    const onEndCb: EventEmitter.EventListener<GameBaseEvents<GN, EndMetadata>, "end"> = (endMetadata) => {
-      this.#running = false;
+    /**
+     * This callback will cancel the start promise.
+     */
+    let cancel: () => void;
+    const cancelSignal = new Promise<typeof GameCanceled>(res => {
+      cancel = () => {
+        res(GameCanceled);
+      }
+    });
+
+    const prevRunningHandle = this.#runningHandle;
+
+    // Wrap the actual game start implementation so the promise can be cancelled
+    // in case the game doesn't stop with a reset call.
+    const ret = new Promise<GameEndEvent<EndMetadata, GN>>(async (res, rej) => {
+      try {
+        await this.load();
+        await this.#resetState();
+
+        const gamePromise = this.startImpl();
+
+        // If the game is marked as canceled before it starts, stop waiting for the game to end.
+        const cancellableRet = await Promise.race([cancelSignal, gamePromise]);
+
+        // If the game finished before the cancel promise, return the game result.
+        if (cancellableRet !== GameCanceled) {
+          return res(cancellableRet);
+        }
+
+        const resetPromise = this.#resetPromise;
+        if (resetPromise instanceof Promise) {
+          // If the game was marked as canceled, reject the promise, but first wait for the game to finish
+          // gracefully (from its reset implementation) or for the reset promise to end (reset times out).
+          await Promise.race([resetPromise, gamePromise]).catch(() => {});
+        }
+        return rej(GameCanceled);
+      } catch (err) {
+        return rej(err);
+      }
+    });
+
+    const currentRunHandle = Object.freeze({
+      startPromise: ret,
+      cancel: cancel!,
+    });
+
+    ret.then((endMetadata: GameEndEvent<EndMetadata, GN>) => {
       this.#lastEnd = endMetadata;
-    };
-    try {
-      this.events.emit("starting");
-      this.events.once("end", onEndCb);
-      await this._start();
-      this.#running = true;
-      this.events.emit("started");
-      return;
-    } catch (e) {
-      const err = this.newError(e);
-      this.events.emit("error", err);
-      throw err;
-    } finally {
-      this.events.off("end", onEndCb);
-    }
+      this.#events.emit("end", endMetadata);
+    }).catch(e => {
+      this.#events.emit("end", e === GameCanceled ? GameCanceled : {
+        status: GameEndStatus.Error,
+        metadata: this.newError(e),
+      });
+    }).finally(() => {
+      // Call cancel to allow the cancel promise to be garbage collected
+      cancel();
+
+      if (currentRunHandle !== this.#runningHandle) return;
+
+      this.#runningHandle = undefined;
+    });
+
+    this.#runningHandle = currentRunHandle;
+
+    this.#events.emit("started");
+    return ret;
   };
 
   /**
-   * This method should be implemented by the game.
-   * It may contain loading logic and should start game logic.
-   * It is guaranteed that this method is not called before while another one is still running.
+   * This method should be implemented by the game. It should start game logic.
+   * It is guaranteed that this method is not called while another one is still running.
    *
+   * @param {GameInstanceEmitter<GN, EndMetadata>} emitter - An object used to emit events.
    * @returns {Promise<EndMetadata>} A promise that resolves when the game ends or rejects on error.
    */
-  protected abstract _start(): void | Promise<void>;
+  protected abstract startImpl(): Promise<GameEndEvent<EndMetadata, GN>>;
+
+  /**
+   * Gets the promise that resolves when the currently running game ends.
+   * If the game is not running and hasn't run yet, this method returns undefined.
+   * 
+   * @returns {GameEndEvent<EndMetadata, GN> | undefined} The last end event, or undefined if the game hasn't ended yet.
+   */
+  public join(): undefined | Promise<GameEndEvent<EndMetadata, GN>> {
+    return this.#runningHandle?.startPromise;
+  }
+
+  /**
+   * Returns the last game result. If the game hasn't been run yet or has been reset, this method returns undefined.
+   * After a reset, the last game result is cleared, so this method will return undefined.
+   * @returns {undefined | GameEndEvent<EndMetadata, GN>} Last game result.
+   */
+  public lastGameResult(): undefined | GameEndEvent<EndMetadata, GN> {
+    return this.#lastEnd;
+  }
 
   /**
    * End the game. Returns a promise that resolves when the game is reset.
    * If the game is not running, this method only resets the last game state.
-   *
-   * @param {boolean} [infallible = true] - If false, the promise will reject on error during the reset operation.
-   * The 'error' event will be emitted in any case.
+   * 
+   * The promise returned by `start` or `join` is guaranteed to reject with
+   * `GameCanceled` by the end of the timeout passed as a parameter.
+   * 
+   * @param {number} [timeoutMs=5000] - The maximum time to wait for the game
+   *                                    to reset before rejecting the promise
+   *                                    anyway and ignoring the promise from
+   *                                    the implementation.
    */
-  public reset(infallible = true): Promise<void> {
+  public reset(timeoutMs = this.defaultResetTimeoutMs): Promise<void> {
     if (this.#resetPromise) return this.#resetPromise;
 
-    this.#resetPromise = this.#doReset(infallible);
-    this.#resetPromise.finally(() => {
+    const resetPromise = this.#doReset(timeoutMs);
+    resetPromise.finally(() => {
       this.#resetPromise = undefined;
     });
+    this.#resetPromise = resetPromise;
 
-    return this.#resetPromise;
+    return resetPromise;
   }
 
-  async #doReset(infallible: boolean) {
-    /** @__INLINE__ */
-    const resetState = () => {
-      this.#running = false;
-      this.#lastEnd = null;
-    }
+  #resetState(): void {
+    this.#runningHandle = undefined;
+    this.#lastEnd = undefined;
+  }
 
-    if (!this.#running) {
-      resetState();
-      return;
-    }
+  #doReset(timeoutMs: number): Promise<void> {
+    const runningHandle = this.#runningHandle;
 
-    let err: GameErrorInterface<GN> | undefined;
     try {
-      await this._reset();
-    } catch (e) {
-      err = this.newError(e);
-      this.events.emit('error', err);
-    }
+      // If the game is not running, don't call the game reset implementation.
+      // Just reset the state and return.
+      if (runningHandle) {
+        runningHandle.cancel();
 
-    resetState();
-    if (!infallible && err) throw err;
+        let timeoutCleanup: () => void;
+        return Promise.race([
+          new Promise<void>(res => {
+            const timeout = setTimeout(res, timeoutMs);
+            timeoutCleanup = () => {
+              clearTimeout(timeout);
+              res();
+            };
+          }),
+          this.resetImpl(),
+        ]).then(() => {}, () => {}).finally(timeoutCleanup!);
+      }
+      return Promise.resolve();
+    } finally {
+      this.#resetState();
+    }
   }
 
   /**
    * This method must be implemented by the game, and it must cancel the game execution.
    * This method must guarantee that the game is not running when it resolves or rejects.
    * If the game is not running, this method won't be called.
-   * This method must emit the 'end' event with status `GameEndStatus.Cancelled` before resolving or rejecting.
-   * Errors during the reset process must not emit an error event, but must instead make this method reject.
+   * Errors during the reset process must be handled by the game. If this promise rejects,
+   * the rejected value will be ignored.
    * This method is guaranteed to be called only once for each game run.
    */
-  protected abstract _reset(): void | Promise<void>;
+  protected abstract resetImpl(): Promise<void>;
 }
