@@ -29,7 +29,7 @@
   "scripts": {
     "build": "rollup --configPlugin 'typescript={\"tsconfig\": \"tsconfig-tools.json\"}' -c",
     "dev": "rollup --configPlugin 'typescript={\"tsconfig\": \"tsconfig-tools.json\"}' -c -w",
-    "test": "jest",
+    "test": "jest --detectOpenHandles --forceExit",
     "_pkgFileName": "echo $(npm pkg get name | sed 's/@//g;s/\\//-/;s/\"//g')-$(npm pkg get version | sed 's/[\"v]//g').tgz",
     "package": "export FN=\"$(npm run-script _pkgFileName)\" && echo \"FN=$FN\" && npm run-script test && npm run-script build && cd dist && echo yarn pack --filename=\"$FN\"",
     "publish": "npm run-script package && npm publish"

@@ -5,6 +5,7 @@ export default {
   testEnvironment: 'node',
   modulePathIgnorePatterns: ["<rootDir>/dist/"],
   transform: {
+    ...preset.defaultsESM.transform,
     '^.+\\.ts$': [
       'ts-jest',
       {
