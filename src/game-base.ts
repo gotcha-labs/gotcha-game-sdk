@@ -10,7 +10,7 @@ export enum GameEndStatus {
   Error   = 'error',
 }
 
-namespace TypeRestrictions {
+export namespace TypeRestrictions {
   /**
    * The game name string literal.
    */
