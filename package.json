@@ -1,7 +1,7 @@
 {
   "name": "@gotcha-labs/sdk",
   "description": "SDK to create new Gotcha games",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
