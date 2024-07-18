@@ -95,7 +95,17 @@ export abstract class GameBase<
   #resetPromise: undefined | Promise<void> = undefined;
   #lastEnd: undefined | GameEndEvent<EndMetadata, GN> = undefined;
 
-  constructor(public readonly name: GN) {}
+  constructor(
+    /**
+     * The name of the game.
+     */
+    public readonly name: GN,
+    /**
+     * The root node where the game will be mounted.
+     * If null, the game will add a new div to the body and use that as the root.
+     */
+    protected readonly rootElement: HTMLElement | null,
+  ) {}
 
   protected newError(err: unknown): GameErrorInterface<GN> {
     if (err instanceof this.ErrorClass) return err;

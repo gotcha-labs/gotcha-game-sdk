@@ -77,13 +77,13 @@ describe("Test GameBase class correct implementations", () => {
 
   class ValidTestGameWithoutProgress extends ValidAbstractTestGame<"ValidTestGameWitoutProgress"> {
     constructor() {
-      super("ValidTestGameWitoutProgress");
+      super("ValidTestGameWitoutProgress", null);
     }
   }
 
   class ValidTestGameWithProgress extends ValidAbstractTestGame<"ValidTestGameWithProgress"> {
     constructor() {
-      super("ValidTestGameWithProgress");
+      super("ValidTestGameWithProgress", null);
     }
 
     protected override async loadImpl(onProgressCb: (progress: number) => void): Promise<void> {
