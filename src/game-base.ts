@@ -75,6 +75,8 @@ interface RunningHandle<
   readonly cancel: () => void;
 }
 
+export type RootElement = HTMLElement | undefined;
+
 /**
  * Base class for games. Games should implement this base class.
  *
@@ -86,7 +88,7 @@ export abstract class GameBase<
   EndMetadata extends TypeRestrictions.EndMetadata<GN>,
 > {
   readonly #events = new GameBaseEventEmitter<EndMetadata, GN>();
-  public readonly ErrorClass: GameErrorConstructor<GN> = newGameErrorClass(this.name);
+  public readonly ErrorClass: GameErrorConstructor<GN>;
 
   protected readonly defaultResetTimeoutMs: number = 5000;
   #loaded = false;
@@ -94,6 +96,7 @@ export abstract class GameBase<
   #runningHandle: undefined | RunningHandle<EndMetadata, GN> = undefined;
   #resetPromise: undefined | Promise<void> = undefined;
   #lastEnd: undefined | GameEndEvent<EndMetadata, GN> = undefined;
+  #rootElement: RootElement;
 
   constructor(
     /**
@@ -102,10 +105,14 @@ export abstract class GameBase<
     public readonly name: GN,
     /**
      * The root node where the game will be mounted.
-     * If null, the game will add a new div to the body and use that as the root.
+     * If null, the game implementation should add a
+     * new div to the body and use that as the root.
      */
-    protected readonly rootElement: HTMLElement | null,
-  ) {}
+    rootElement: RootElement,
+  ) {
+    this.#rootElement = rootElement;
+    this.ErrorClass = newGameErrorClass(name);
+  }
 
   protected newError(err: unknown): GameErrorInterface<GN> {
     if (err instanceof this.ErrorClass) return err;
@@ -138,7 +145,7 @@ export abstract class GameBase<
     const loadingPromise = (async () => {
       this.#events.emit('loading', undefined);
 
-      await this.loadImpl(this.#loadingProgressCb);
+      await this.loadImpl(this.#loadingProgressCb, this.#rootElement);
       this.#loaded = true;
       this.#events.emit('loaded');
     })();
@@ -163,8 +170,9 @@ export abstract class GameBase<
    * A simple game that doesn't require loading should implement this method and leave it empty.
    * 
    * @param {progressCallback} progressCb - A callback that should be called with the loading progress.
+   * @param {RootElement} rootElement - The element passed to the constructor, where the game should mount.
    */
-  protected abstract loadImpl(progressCb: (progress: number) => void): Promise<void>;
+  protected abstract loadImpl(progressCb: (progress: number) => void, rootElement: RootElement): Promise<void>;
 
   /**
    * Starts the game. Returns a promise that resolves when the game starts or rejects on error.
@@ -172,7 +180,7 @@ export abstract class GameBase<
    * The promise resolves with the end metadata.
    * Events will be emitted and can be used to track the game's progress instead of this promise.
    * If the game is already running, this method throws `GameAlreadyRunning` synchronously.
-   * The `reset` method can be used to cancel the game.
+   * The `reset` method can be used to cancel the game, in which case, this rejects with GameCanceled.
    *
    * @returns {boolean} A promise that resolves when the game ends.
    * @throws {GameAlreadyRunning} If the game is already running (throws synchronously).
@@ -198,7 +206,7 @@ export abstract class GameBase<
       try {
         await this.load();
 
-        const gamePromise = this.startImpl();
+        const gamePromise = this.startImpl(this.#rootElement);
 
         // If the game is marked as canceled before it starts, stop waiting for the game to end.
         const cancellableRet = await Promise.race([cancelSignal, gamePromise]);
@@ -261,9 +269,10 @@ export abstract class GameBase<
    * It is guaranteed that this method is not called while another one is still running.
    *
    * @param {GameInstanceEmitter<GN, EndMetadata>} emitter - An object used to emit events.
+   * @param {RootElement} rootElement - The element passed to the constructor, where the game should mount.
    * @returns {Promise<EndMetadata>} A promise that resolves when the game ends or rejects on error.
    */
-  protected abstract startImpl(): Promise<GameEndEvent<EndMetadata, GN>>;
+  protected abstract startImpl(rootElement: RootElement): Promise<GameEndEvent<EndMetadata, GN>>;
 
   /**
    * Gets the promise that resolves when the currently running game ends.

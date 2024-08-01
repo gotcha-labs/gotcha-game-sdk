@@ -1,4 +1,4 @@
-import { GameAlreadyRunning, GameBase, GameCanceled, GameEndEvent, GameEndStatus } from './game-base';
+import { GameAlreadyRunning, GameBase, GameCanceled, GameEndEvent, GameEndStatus, RootElement } from './game-base';
 import { GameErrorInterface } from './game-error';
 
 type TestGameEndMetadata<GN extends string> = {
@@ -41,63 +41,103 @@ function wait(a: number, b?: number): Promise<void> {
   });
 }
 
+interface GameImplMocks {
+    resetImpl: jest.Mock<Promise<void>, []>;
+    startImpl: jest.Mock<Promise<void>, []>;
+    loadImpl: jest.Mock<Promise<void>, []>;
+}
+
+function newGameImplMocks(): GameImplMocks {
+    return {
+        resetImpl: jest.fn(),
+        startImpl: jest.fn(),
+        loadImpl: jest.fn(),
+    };
+}
+
 describe("Test GameBase class correct implementations", () => {
-  abstract class ValidAbstractTestGame<GN extends string> extends GameBase<GN, TestGameEndMetadata<GN>> {
-    #running = false;
-    loadCalled = 0;
-    protected override readonly defaultResetTimeoutMs = 100;
-
-    // Reset while running takes 50ms.
-    // Reset while not running takes 10ms.
-    protected override async resetImpl(): Promise<void> {
-      await wait(10);
-      if (!this.#running) return;
-
-      await wait(40);
-      this.#running = false;
-    }
-
-    // Game finishes between 50ms and 100ms with a score between 85% and 100%.
-    protected override async startImpl(): Promise<GameEndEvent<TestGameEndMetadata<GN>, GN>> {
-      await wait(50, 100);
-
-      return {
-        status: GameEndStatus.Success,
-        metadata: {
-          score: randBetween(85, 100),
-        },
-      };
-    }
-
-    protected override async loadImpl(_: (progress: number) => void): Promise<void> {
-      this.loadCalled++;
-      await wait(10, 20);
-    }
-  }
-
-  class ValidTestGameWithoutProgress extends ValidAbstractTestGame<"ValidTestGameWitoutProgress"> {
-    constructor() {
-      super("ValidTestGameWitoutProgress", null);
-    }
-  }
-
-  class ValidTestGameWithProgress extends ValidAbstractTestGame<"ValidTestGameWithProgress"> {
-    constructor() {
-      super("ValidTestGameWithProgress", null);
-    }
-
-    protected override async loadImpl(onProgressCb: (progress: number) => void): Promise<void> {
-      await super.loadImpl(onProgressCb);
-
-      for (let i = 0; i <= 100; i += 5) {
-        await wait(1);
-        onProgressCb(i);
+    class ValidTestGameWithoutProgress extends GameBase<"ValidTestGameWithoutProgress", TestGameEndMetadata<"ValidTestGameWithoutProgress">> {
+      #running = false;
+      mocks = newGameImplMocks();
+      protected override readonly defaultResetTimeoutMs = 100;
+  
+      constructor() {
+        super("ValidTestGameWithoutProgress", undefined);
+      }
+  
+      // Reset while running takes 50ms.
+      // Reset while not running takes 10ms.
+      protected override async resetImpl(): Promise<void> {
+        this.mocks.resetImpl();
+        await wait(10);
+        if (!this.#running) return;
+  
+        await wait(40);
+        this.#running = false;
+      }
+  
+      // Game finishes between 50ms and 100ms with a score between 85% and 100%.
+      protected override async startImpl(): Promise<GameEndEvent<TestGameEndMetadata<"ValidTestGameWithoutProgress">, "ValidTestGameWithoutProgress">> {
+        this.mocks.startImpl();
+        await wait(50, 100);
+  
+        return {
+          status: GameEndStatus.Success,
+          metadata: {
+            score: randBetween(85, 100),
+          },
+        };
+      }
+  
+      protected override async loadImpl(_: (progress: number) => void): Promise<void> {
+        this.mocks.loadImpl();
+        await wait(10, 20);
       }
     }
-  }
+    class ValidTestGameWithProgress extends GameBase<"ValidTestGameWithProgress", TestGameEndMetadata<"ValidTestGameWithProgress">> {
+      #running = false;
+      mocks = newGameImplMocks();
+      protected override readonly defaultResetTimeoutMs = 100;
+  
+      constructor(root: RootElement) {
+        super("ValidTestGameWithProgress", root);
+      }
+  
+      // Reset while running takes 50ms.
+      // Reset while not running takes 10ms.
+      protected override async resetImpl(): Promise<void> {
+        this.mocks.resetImpl();
+        await wait(10);
+        if (!this.#running) return;
+  
+        await wait(40);
+        this.#running = false;
+      }
+  
+      // Game finishes between 50ms and 100ms with a score between 85% and 100%.
+      protected override async startImpl(rootElement: RootElement): Promise<GameEndEvent<TestGameEndMetadata<"ValidTestGameWithProgress">, "ValidTestGameWithProgress">> {
+        this.mocks.startImpl();
+        await wait(50, 100);
+  
+        return {
+          status: GameEndStatus.Success,
+          metadata: {
+            score: randBetween(85, 100),
+          },
+        };
+      }
+  
+      protected override async loadImpl(onProgressCb: (progress: number) => void, rootElement: RootElement): Promise<void> {
+        this.mocks.loadImpl();
+        for (let i = 0; i <= 100; i += 5) {
+          await wait(1);
+          onProgressCb(i);
+        }
+      }
+    }
 
   it("should report events", async () => {
-    const game = new ValidTestGameWithProgress();
+    const game = new ValidTestGameWithProgress(undefined);
 
     let progressArr: (undefined | number)[] = [];
     const onLoadingProgress = jest.fn((progress: number | undefined): void => {
@@ -137,6 +177,7 @@ describe("Test GameBase class correct implementations", () => {
 
     // Expect the onLoaded callback to have been called once.
     expect(onLoaded).toHaveBeenCalledTimes(1);
+    expect(game.mocks.loadImpl).toHaveBeenCalledTimes(1);
 
     // Start the game
     const startPromise = game.start();
@@ -150,6 +191,7 @@ describe("Test GameBase class correct implementations", () => {
     ).resolves.toMatchObject({
       status: GameEndStatus.Success,
     });
+    expect(game.mocks.startImpl).toHaveBeenCalledTimes(1);
 
     expect(onEnd).toHaveBeenCalledTimes(1);
     expect(endStatus).not.toBeUndefined();
@@ -162,6 +204,11 @@ describe("Test GameBase class correct implementations", () => {
     const metadata = endMetadata.metadata as EM[GameEndStatus.Success];
     expect(metadata.score).toBeGreaterThanOrEqual(85);
     expect(metadata.score).toBeLessThanOrEqual(100);
+
+    await expect(
+        game.reset(),
+    ).resolves.toBeUndefined();
+    expect(game.mocks.resetImpl).not.toHaveBeenCalled();
   });
 
   it("should only load once", async () => {
@@ -187,6 +234,7 @@ describe("Test GameBase class correct implementations", () => {
 
     expect(onLoadingProgress).toHaveBeenCalledTimes(1);
     expect(onLoaded).toHaveBeenCalledTimes(1);
+    expect(game.mocks.loadImpl).toHaveBeenCalledTimes(1);
 
     await expect(
       game.load(),
@@ -194,6 +242,10 @@ describe("Test GameBase class correct implementations", () => {
 
     expect(onLoadingProgress).toHaveBeenCalledTimes(1);
     expect(onLoaded).toHaveBeenCalledTimes(1);
+    expect(game.mocks.loadImpl).toHaveBeenCalledTimes(1);
+
+    expect(game.mocks.startImpl).not.toHaveBeenCalled();
+    expect(game.mocks.resetImpl).not.toHaveBeenCalled();
   });
 
   it("should only allow one start at a time", async () => {
@@ -216,6 +268,9 @@ describe("Test GameBase class correct implementations", () => {
     await expect(
       startPromise,
     ).resolves.toBeDefined();
+    expect(game.mocks.loadImpl).toHaveBeenCalledTimes(1);
+    expect(game.mocks.startImpl).toHaveBeenCalledTimes(1);
+    expect(game.mocks.resetImpl).not.toHaveBeenCalled();
   });
 
   it("should cancel the game", async () => {
@@ -237,5 +292,9 @@ describe("Test GameBase class correct implementations", () => {
     await expect(startPromise).rejects.toBe(GameCanceled);
     expect(onEnd).toHaveBeenCalledTimes(1);
     expect(onEnd).toHaveBeenCalledWith(GameCanceled);
+
+    expect(game.mocks.loadImpl).toHaveBeenCalledTimes(1);
+    expect(game.mocks.startImpl).toHaveBeenCalledTimes(1);
+    expect(game.mocks.resetImpl).toHaveBeenCalledTimes(1);
   });
 });
