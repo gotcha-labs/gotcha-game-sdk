@@ -197,7 +197,6 @@ export abstract class GameBase<
     const ret = new Promise<GameEndEvent<EndMetadata, GN>>(async (res, rej) => {
       try {
         await this.load();
-        await this.#resetState();
 
         const gamePromise = this.startImpl();
 
