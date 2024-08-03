@@ -87,16 +87,16 @@ export abstract class GameBase<
   GN extends TypeRestrictions.GN,
   EndMetadata extends TypeRestrictions.EndMetadata<GN>,
 > {
-  private readonly events = new GameBaseEventEmitter<EndMetadata, GN>();
+  readonly #events = new GameBaseEventEmitter<EndMetadata, GN>();
   public readonly ErrorClass: GameErrorConstructor<GN>;
 
   protected readonly defaultResetTimeoutMs: number = 5000;
-  private loaded = false;
-  private loadingPromise: undefined | Promise<void> = undefined;
-  private runningHandle: undefined | RunningHandle<EndMetadata, GN> = undefined;
-  private resetPromise: undefined | Promise<void> = undefined;
-  private lastEnd: undefined | GameEndEvent<EndMetadata, GN> = undefined;
-  private rootElement: RootElement;
+  #loaded = false;
+  #loadingPromise: undefined | Promise<void> = undefined;
+  #runningHandle: undefined | RunningHandle<EndMetadata, GN> = undefined;
+  #resetPromise: undefined | Promise<void> = undefined;
+  #lastEnd: undefined | GameEndEvent<EndMetadata, GN> = undefined;
+  #rootElement: RootElement;
 
   constructor(
     /**
@@ -110,7 +110,7 @@ export abstract class GameBase<
      */
     rootElement: RootElement,
   ) {
-    this.rootElement = rootElement;
+    this.#rootElement = rootElement;
     this.ErrorClass = newGameErrorClass(name);
   }
 
@@ -125,10 +125,10 @@ export abstract class GameBase<
    * @callback progressCallback
    * @param {number} progress - The current progress as a percentage.
    */
-  private loadingProgressCb = (progress: number) => {
-    if (this.loaded) return;
+  #loadingProgressCb = (progress: number) => {
+    if (this.#loaded) return;
 
-    this.events.emit('loading', Math.max(0,Math.min(100, progress)));
+    this.#events.emit('loading', Math.max(0,Math.min(100, progress)));
   }
 
   /**
@@ -139,21 +139,21 @@ export abstract class GameBase<
    * to be called manually as an optimization.
    */
   public load(): Promise<void> {
-    if (this.loaded) return Promise.resolve();
-    if (this.loadingPromise) return this.loadingPromise;
+    if (this.#loaded) return Promise.resolve();
+    if (this.#loadingPromise) return this.#loadingPromise;
 
     const loadingPromise = (async () => {
-      this.events.emit('loading', undefined);
+      this.#events.emit('loading', undefined);
 
-      await this.loadImpl(this.loadingProgressCb, this.rootElement);
-      this.loaded = true;
-      this.events.emit('loaded');
+      await this.loadImpl(this.#loadingProgressCb, this.#rootElement);
+      this.#loaded = true;
+      this.#events.emit('loaded');
     })();
     loadingPromise.finally(() => {
-      this.loadingPromise = undefined;
+      this.#loadingPromise = undefined;
     });
 
-    return this.loadingPromise = loadingPromise;
+    return this.#loadingPromise = loadingPromise;
   }
 
   /**
@@ -186,9 +186,9 @@ export abstract class GameBase<
    * @throws {GameAlreadyRunning} If the game is already running (throws synchronously).
    */
   public start(): Promise<GameEndEvent<EndMetadata, GN>> {
-    if (this.runningHandle) throw GameAlreadyRunning;
+    if (this.#runningHandle) throw GameAlreadyRunning;
 
-    this.lastEnd = undefined;
+    this.#lastEnd = undefined;
 
     /**
      * This callback will cancel the start promise.
@@ -206,7 +206,7 @@ export abstract class GameBase<
       try {
         await this.load();
 
-        const gamePromise = this.startImpl(this.rootElement);
+        const gamePromise = this.startImpl(this.#rootElement);
 
         // If the game is marked as canceled before it starts, stop waiting for the game to end.
         const cancellableRet = await Promise.race([cancelSignal, gamePromise]);
@@ -216,7 +216,7 @@ export abstract class GameBase<
           return res(cancellableRet);
         }
 
-        const resetPromise = this.resetPromise;
+        const resetPromise = this.#resetPromise;
         if (resetPromise instanceof Promise) {
           // If the game was marked as canceled, reject the promise, but first wait for the game to finish
           // gracefully (from its reset implementation) or for the reset promise to end (reset times out).
@@ -234,11 +234,11 @@ export abstract class GameBase<
     });
 
     ret.then((endMetadata: GameEndEvent<EndMetadata, GN>) => {
-      this.lastEnd = endMetadata;
-      this.events.emit("end", endMetadata);
+      this.#lastEnd = endMetadata;
+      this.#events.emit("end", endMetadata);
     }).catch(e => {
       if (e === GameCanceled) {
-        this.events.emit("end", GameCanceled);
+        this.#events.emit("end", GameCanceled);
         return;
       };
 
@@ -247,20 +247,20 @@ export abstract class GameBase<
         metadata: this.newError(e),
       };
 
-      this.lastEnd = endMetadata;
-      this.events.emit("end", endMetadata);
+      this.#lastEnd = endMetadata;
+      this.#events.emit("end", endMetadata);
     }).finally(() => {
       // Call cancel to allow the cancel promise to be garbage collected
       cancel();
 
-      if (currentRunHandle !== this.runningHandle) return;
+      if (currentRunHandle !== this.#runningHandle) return;
 
-      this.runningHandle = undefined;
+      this.#runningHandle = undefined;
     });
 
-    this.runningHandle = currentRunHandle;
+    this.#runningHandle = currentRunHandle;
 
-    this.events.emit("started");
+    this.#events.emit("started");
     return ret;
   };
 
@@ -281,7 +281,7 @@ export abstract class GameBase<
    * @returns {GameEndEvent<EndMetadata, GN> | undefined} The last end event, or undefined if the game hasn't ended yet.
    */
   public join(): undefined | Promise<GameEndEvent<EndMetadata, GN>> {
-    return this.runningHandle?.startPromise;
+    return this.#runningHandle?.startPromise;
   }
 
   /**
@@ -289,7 +289,7 @@ export abstract class GameBase<
    * After a reset, the last game result is cleared, so this method will return undefined.
    */
   public get lastGameResult(): undefined | GameEndEvent<EndMetadata, GN> {
-    return this.lastEnd;
+    return this.#lastEnd;
   }
 
   /**
@@ -305,24 +305,24 @@ export abstract class GameBase<
    *                                    the implementation.
    */
   public reset(timeoutMs = this.defaultResetTimeoutMs): Promise<void> {
-    if (this.resetPromise) return this.resetPromise;
+    if (this.#resetPromise) return this.#resetPromise;
 
-    const resetPromise = this.doReset(timeoutMs);
+    const resetPromise = this.#doReset(timeoutMs);
     resetPromise.finally(() => {
-      this.resetPromise = undefined;
+      this.#resetPromise = undefined;
     });
-    this.resetPromise = resetPromise;
+    this.#resetPromise = resetPromise;
 
     return resetPromise;
   }
 
-  private resetState(): void {
-    this.runningHandle = undefined;
-    this.lastEnd = undefined;
+  #resetState(): void {
+    this.#runningHandle = undefined;
+    this.#lastEnd = undefined;
   }
 
-  private doReset(timeoutMs: number): Promise<void> {
-    const runningHandle = this.runningHandle;
+  #doReset(timeoutMs: number): Promise<void> {
+    const runningHandle = this.#runningHandle;
 
     try {
       // If the game is not running, don't call the game reset implementation.
@@ -344,7 +344,7 @@ export abstract class GameBase<
       }
       return Promise.resolve();
     } finally {
-      this.resetState();
+      this.#resetState();
     }
   }
 
@@ -362,7 +362,7 @@ export abstract class GameBase<
     event: E,
     listener: (...args: GameEvents<EndMetadata, GN>[E]) => void,
   ) {
-    this.events.on(event, listener);
+    this.#events.on(event, listener);
     return this;
   }
 
@@ -370,7 +370,7 @@ export abstract class GameBase<
     event: E,
     listener: (...args: GameEvents<EndMetadata, GN>[E]) => void,
   ) {
-    this.events.once(event, listener);
+    this.#events.once(event, listener);
     return this;
   }
 
@@ -378,7 +378,7 @@ export abstract class GameBase<
     event: E,
     listener: (...args: GameEvents<EndMetadata, GN>[E]) => void,
   ) {
-    this.events.off(event, listener);
+    this.#events.off(event, listener);
     return this;
   }
 }
